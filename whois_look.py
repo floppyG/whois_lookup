@@ -1,14 +1,14 @@
 #!/var/ossec/framework/python/bin/python3
-# Copyright Whysecurity Cellatica 2024
 import json
 import sys
 import ipaddress
 import logging
 import requests
+import re
 from socket import socket, AF_UNIX, SOCK_DGRAM
 
 # Configure the logger for writing to a file
-logging.basicConfig(filename='/var/ossec/logs/output.log', level=logging.DEBUG, format='%(asctime)s - %(message)s')
+logging.basicConfig(filename='/var/ossec/logs/whois_output.log', level=logging.DEBUG, format='%(asctime)s - %(message)s')
 
 # Create a separate logger for console output
 console_logger = logging.getLogger('console')
@@ -107,26 +107,31 @@ def main(json_path):
     ip_info = {}
 
     debug("Extracting IP information from alert data")
-    if "_source" in data and "data" in data["_source"]:
-        if "srcip" in data["_source"]["data"]:
-            ip_info["srcip"] = data["_source"]["data"]["srcip"]
-        if "dstip" in data["_source"]["data"]:
-            ip_info["dstip"] = data["_source"]["data"]["dstip"]
-        if "srcPostNAT" in data["_source"]["data"]:
-            ip_info["srcPostNAT"] = data["_source"]["data"]["srcPostNAT"]
-    elif "data" in data:
-        if "srcip" in data["data"]:
-            ip_info["srcip"] = data["data"]["srcip"]
-        if "dstip" in data["data"]:
-            ip_info["dstip"] = data["data"]["dstip"]
-        if "srcPostNAT" in data["data"]:
-            ip_info["srcPostNAT"] = data["data"]["srcPostNAT"]
-    else:
-        debug(f"No data found in JSON path")
-        return
 
-    for field, ip in ip_info.items():
-        debug(f"Processing {field}: {ip}")
+    # Define a regex pattern for matching IP addresses
+    ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+
+    # Search the entire JSON structure for IPs
+    def extract_ips_from_json(json_data):
+        if isinstance(json_data, dict):
+            for key, value in json_data.items():
+                extract_ips_from_json(value)
+        elif isinstance(json_data, list):
+            for item in json_data:
+                extract_ips_from_json(item)
+        elif isinstance(json_data, str):
+            matches = re.findall(ip_pattern, json_data)
+            for match in matches:
+                if match not in ip_info:
+                    ip_info[match] = "found"
+
+    extract_ips_from_json(data)
+
+    if not ip_info:
+        debug("No IP addresses found in the provided data")
+
+    for ip in ip_info.keys():
+        debug(f"Processing IP: {ip}")
         if is_public_ip(ip):
             debug(f"{ip} is a public IP.")
             whois_result = whois_lookup(ip)
